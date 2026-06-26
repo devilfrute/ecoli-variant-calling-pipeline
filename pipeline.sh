@@ -600,4 +600,6 @@ divider
 echo ""
 echo -e "${DIM}  Pipeline by Vamsi Krishna${NC}"
 echo -e "${DIM}  github.com/devilfrute/ecoli-variant-calling-pipeline${NC}"
+# Completion sound
+mpg123 -q ~/ngs_practice/assets/complete.mp3 2>/dev/null || true
 echo ""
