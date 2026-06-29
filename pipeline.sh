@@ -1,9 +1,9 @@
 #!/bin/bash
 # ================================================================
 #  NGS VARIANT CALLING PIPELINE
-#  Author  : Vamsi Krishna 
+#  Author  : Vamsi Krishna Seerla
 #  GitHub  : https://github.com/devilfrute
-#  Version : 1.0
+#  Version : 2.0
 #  Organism: E. coli K-12 (adaptable to any organism)
 # ================================================================
 
@@ -13,10 +13,17 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
+
+# ── CONDA ENV CHECK ─────────────────────────────────────────────
+if [[ "${CONDA_DEFAULT_ENV}" != "ngs" ]]; then
+    echo -e "${RED}  ERROR  ${NC}ngs conda environment is not active."
+    echo -e "${DIM}         Run: conda activate ngs${NC}"
+    echo -e "${DIM}         Then rerun: bash pipeline.sh${NC}"
+    exit 1
+fi
 
 # ── HELPER FUNCTIONS ────────────────────────────────────────────
 
@@ -30,81 +37,46 @@ print_banner() {
   ╚══════════════════════════════════════════════════════════════╝
 EOF
     echo -e "${NC}"
-    echo -e "${DIM}  Author : Vamsi Krishna${NC}"
+    echo -e "${DIM}  Author : Vamsi Krishna Seerla${NC}"
     echo -e "${DIM}  GitHub : https://github.com/devilfrute${NC}"
-    echo -e "${DIM}  Tool   : GATK4 HaplotypeCaller | BWA MEM | fastp | FastQC${NC}"
+    echo -e "${DIM}  Tools  : GATK4 HaplotypeCaller | BWA MEM | fastp | FastQC${NC}"
     echo ""
 }
 
-# Section header
 section() {
     local num=$1
     local title=$2
     local desc=$3
     echo ""
     echo -e "${BOLD}${BLUE}  ┌─────────────────────────────────────────────────────┐${NC}"
-    printf "${BOLD}${BLUE}   │  STEP %-2s  %-44s│${NC}\n" "$num" "$title"          │
+    echo -e "${BOLD}${BLUE}  │  STEP ${num} — ${title}${NC}"
     echo -e "${BOLD}${BLUE}  └─────────────────────────────────────────────────────┘${NC}"
-    echo -e "${DIM}  $desc${NC}"
+    echo -e "${DIM}  ${desc}${NC}"
     echo ""
 }
 
-# Info tip shown before each step
-tip() {
-    echo -e "${YELLOW}  NOTE  ${NC}$1"
-}
+tip()  { echo -e "${YELLOW}  NOTE  ${NC}$1"; }
+ok()   { echo -e "${GREEN}  PASS  ${NC}$1"; }
+warn() { echo -e "${YELLOW}  WARN  ${NC}$1"; }
+fail() { echo -e "${RED}  FAIL  ${NC}$1"; }
 
-# Success message
-ok() {
-    echo -e "${GREEN}  PASS  ${NC}$1"
-}
-
-# Warning message
-warn() {
-    echo -e "${YELLOW}  WARN  ${NC}$1"
-}
-
-# Error message
-fail() {
-    echo -e "${RED}  FAIL  ${NC}$1"
-}
-
-# Spinning animation while a command runs
 spinner() {
     local pid=$1
     local msg=$2
-    local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
     local i=0
-    tput civis  # hide cursor
+    local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     while kill -0 "$pid" 2>/dev/null; do
-        local c="${spin:$i:1}"
-        printf "\r  ${CYAN}${c}${NC}  %s" "$msg"
+        printf "\r  ${CYAN}${frames[$i]}${NC}  %s" "$msg"
         i=$(( (i+1) % 10 ))
         sleep 0.1
     done
-    tput cnorm  # restore cursor
-    printf "\r  ${GREEN}✔${NC}  %-50s\n" "$msg"
+    printf "\r  ${GREEN}done${NC}  %-50s\n" "$msg"
 }
 
-# Progress bar
-progress_bar() {
-    local duration=$1
-    local msg=$2
-    local width=40
-    echo -ne "  ${msg}\n  ["
-    for ((i=0; i<width; i++)); do
-        sleep $(echo "scale=3; $duration/$width" | bc)
-        echo -ne "${GREEN}█${NC}"
-    done
-    echo -e "] Done"
-}
-
-# Divider line
 divider() {
     echo -e "${DIM}  ──────────────────────────────────────────────────────${NC}"
 }
 
-# Ask user to continue, skip or quit
 ask_continue() {
     local step=$1
     echo ""
@@ -119,12 +91,10 @@ ask_continue() {
     esac
 }
 
-# Metric display
 metric() {
     printf "  ${CYAN}%-25s${NC} ${BOLD}%s${NC}\n" "$1" "$2"
 }
 
-# Quality assessment
 assess_mapping() {
     local rate=$1
     if (( $(echo "$rate > 90" | bc -l) )); then
@@ -132,7 +102,7 @@ assess_mapping() {
     elif (( $(echo "$rate > 80" | bc -l) )); then
         warn "Mapping rate ${rate}% — Acceptable, check for contamination"
     else
-        fail "Mapping rate ${rate}% — Low, verify reference genome and sample"
+        fail "Mapping rate ${rate}% — Low, verify reference genome and sample quality"
     fi
 }
 
@@ -190,28 +160,33 @@ read -r confirm
 [[ $confirm =~ [Qq] ]] && echo -e "${RED}  Cancelled.${NC}" && exit 0
 
 # ── DIRECTORIES ─────────────────────────────────────────────────
-BASE_DIR=~/ngs_practice
-RAW_DIR=${BASE_DIR}/day1
+BASE_DIR=~/ngs_pipeline
+RAW_DIR=${BASE_DIR}/data/raw
+TRIM_DIR=${BASE_DIR}/data/trimmed
+QC_DIR=${BASE_DIR}/data/qc
 REF_DIR=${BASE_DIR}/reference
 ALIGNED_DIR=${BASE_DIR}/aligned
 VARIANTS_DIR=${BASE_DIR}/variants
-REF=${REF_DIR}/ecoli_k12.fasta
 LOG_DIR=${BASE_DIR}/logs
+REF=${REF_DIR}/ecoli_k12.fasta
 
-mkdir -p ${RAW_DIR} ${REF_DIR} ${ALIGNED_DIR} ${VARIANTS_DIR} ${LOG_DIR}
+mkdir -p "${RAW_DIR}" "${TRIM_DIR}" "${QC_DIR}" \
+         "${REF_DIR}" "${ALIGNED_DIR}" \
+         "${VARIANTS_DIR}" "${LOG_DIR}"
 
 START_TIME=$(date +%s)
 PIPELINE_DATE=$(date "+%Y-%m-%d %H:%M:%S")
 
 echo ""
-echo -e "${DIM}  Started: ${PIPELINE_DATE}${NC}"
+echo -e "${DIM}  Started : ${PIPELINE_DATE}${NC}"
+echo -e "${DIM}  Log dir : ${LOG_DIR}${NC}"
 
 # ════════════════════════════════════════════════════════════════
 # STEP 1 — DOWNLOAD REFERENCE GENOME
 # ════════════════════════════════════════════════════════════════
 section "1" "Download Reference Genome" \
 "Downloading E. coli K-12 reference (GCF_000005845.2) from NCBI FTP."
-tip "The reference genome is the 'gold standard' sequence. Variants are positions where your sample differs from it."
+tip "The reference genome is the gold standard sequence. Variants are positions where your sample differs from it."
 
 if ask_continue "Download E. coli K-12 reference genome"; then
     if [ ! -f "${REF}" ]; then
@@ -222,7 +197,7 @@ if ask_continue "Download E. coli K-12 reference genome"; then
         [ -f "${REF_DIR}/GCF_000005845.2_ASM584v2_genomic.fna" ] && \
             mv "${REF_DIR}/GCF_000005845.2_ASM584v2_genomic.fna" "${REF}"
         ok "Reference downloaded: ${REF}"
-        metric "Reference size" "$(ls -lh ${REF} | awk '{print $5}')"
+        metric "Reference size" "$(ls -lh "${REF}" | awk '{print $5}')"
     else
         ok "Reference already exists — skipping download"
     fi
@@ -270,8 +245,8 @@ if ask_continue "Download ${SAMPLE} from NCBI SRA"; then
             -e "${THREADS}" \
             -O "${RAW_DIR}/" 2>&1 | tee "${LOG_DIR}/fasterq.log"
         ok "Download complete"
-        metric "R1 size" "$(ls -lh ${RAW_DIR}/${SAMPLE}_1.fastq | awk '{print $5}')"
-        metric "R2 size" "$(ls -lh ${RAW_DIR}/${SAMPLE}_2.fastq | awk '{print $5}')"
+        metric "R1 size" "$(ls -lh "${RAW_DIR}/${SAMPLE}_1.fastq" | awk '{print $5}')"
+        metric "R2 size" "$(ls -lh "${RAW_DIR}/${SAMPLE}_2.fastq" | awk '{print $5}')"
     else
         ok "FASTQ files already exist — skipping download"
     fi
@@ -285,21 +260,21 @@ section "4" "Quality Control — Raw Reads (FastQC)" \
 tip "Always QC before and after trimming. Raw data commonly shows adapter contamination and quality drop at read 3-prime ends — both expected for Illumina data."
 
 if ask_continue "Run FastQC on raw reads"; then
-    mkdir -p "${RAW_DIR}/fastqc_raw"
+    mkdir -p "${QC_DIR}/fastqc_raw"
     fastqc "${RAW_DIR}/${SAMPLE}_1.fastq" \
            "${RAW_DIR}/${SAMPLE}_2.fastq" \
            -t "${THREADS}" \
-           -o "${RAW_DIR}/fastqc_raw/" \
+           -o "${QC_DIR}/fastqc_raw/" \
            > "${LOG_DIR}/fastqc_raw.log" 2>&1 &
     spinner $! "FastQC processing raw reads"
-    ok "FastQC reports: ${RAW_DIR}/fastqc_raw/"
-    tip "Open ${RAW_DIR}/fastqc_raw/${SAMPLE}_1_fastqc.html in browser to review quality."
+    ok "FastQC reports saved to: ${QC_DIR}/fastqc_raw/"
+    tip "Open ${QC_DIR}/fastqc_raw/${SAMPLE}_1_fastqc.html in browser to review quality."
 
     echo ""
     echo -ne "  Open FastQC report in browser now? [ Y / N ] : "
     read -r open_qc
     [[ $open_qc =~ [Yy] ]] && \
-        xdg-open "${RAW_DIR}/fastqc_raw/${SAMPLE}_1_fastqc.html" > /dev/null 2>&1 || true
+        xdg-open "${QC_DIR}/fastqc_raw/${SAMPLE}_1_fastqc.html" > /dev/null 2>&1 || true
 fi
 
 # ════════════════════════════════════════════════════════════════
@@ -320,10 +295,10 @@ if ask_continue "Trim adapters and low-quality bases with fastp"; then
     fastp \
         -i "${RAW_DIR}/${SAMPLE}_1.fastq" \
         -I "${RAW_DIR}/${SAMPLE}_2.fastq" \
-        -o "${RAW_DIR}/${SAMPLE}_1_trimmed.fastq" \
-        -O "${RAW_DIR}/${SAMPLE}_2_trimmed.fastq" \
-        -h "${RAW_DIR}/fastp_report.html" \
-        -j "${RAW_DIR}/fastp_report.json" \
+        -o "${TRIM_DIR}/${SAMPLE}_1_trimmed.fastq" \
+        -O "${TRIM_DIR}/${SAMPLE}_2_trimmed.fastq" \
+        -h "${QC_DIR}/fastp_report.html" \
+        -j "${QC_DIR}/fastp_report.json" \
         --thread "${THREADS}" \
         --detect_adapter_for_pe \
         --qualified_quality_phred "${MIN_QUAL}" \
@@ -333,8 +308,9 @@ if ask_continue "Trim adapters and low-quality bases with fastp"; then
         > "${LOG_DIR}/fastp.log" 2>&1 &
     spinner $! "Trimming adapters and low-quality bases"
     ok "Trimming complete"
-    metric "Trimmed R1" "${RAW_DIR}/${SAMPLE}_1_trimmed.fastq"
-    metric "Trimmed R2" "${RAW_DIR}/${SAMPLE}_2_trimmed.fastq"
+    metric "Trimmed R1"   "${TRIM_DIR}/${SAMPLE}_1_trimmed.fastq"
+    metric "Trimmed R2"   "${TRIM_DIR}/${SAMPLE}_2_trimmed.fastq"
+    metric "fastp report" "${QC_DIR}/fastp_report.html"
 fi
 
 # ════════════════════════════════════════════════════════════════
@@ -345,14 +321,14 @@ section "6" "Quality Control — Trimmed Reads (FastQC)" \
 tip "Adapter content should now be green. Per-base quality should show improvement at 3-prime ends."
 
 if ask_continue "Run FastQC on trimmed reads"; then
-    mkdir -p "${RAW_DIR}/fastqc_trimmed"
-    fastqc "${RAW_DIR}/${SAMPLE}_1_trimmed.fastq" \
-           "${RAW_DIR}/${SAMPLE}_2_trimmed.fastq" \
+    mkdir -p "${QC_DIR}/fastqc_trimmed"
+    fastqc "${TRIM_DIR}/${SAMPLE}_1_trimmed.fastq" \
+           "${TRIM_DIR}/${SAMPLE}_2_trimmed.fastq" \
            -t "${THREADS}" \
-           -o "${RAW_DIR}/fastqc_trimmed/" \
+           -o "${QC_DIR}/fastqc_trimmed/" \
            > "${LOG_DIR}/fastqc_trimmed.log" 2>&1 &
     spinner $! "FastQC processing trimmed reads"
-    ok "Post-trim QC complete: ${RAW_DIR}/fastqc_trimmed/"
+    ok "Post-trim QC saved to: ${QC_DIR}/fastqc_trimmed/"
 fi
 
 # ════════════════════════════════════════════════════════════════
@@ -363,9 +339,9 @@ section "7" "Read Alignment — BWA MEM" \
 tip "BWA MEM is the standard aligner for Illumina reads >70bp. Read groups are mandatory for GATK downstream processing."
 
 echo ""
-metric "Algorithm"      "BWA MEM"
-metric "Read groups"    "ID:${SAMPLE} SM:${SAMPLE} PL:ILLUMINA LB:lib1"
-metric "Threads"        "${THREADS}"
+metric "Algorithm"   "BWA MEM"
+metric "Read groups" "ID:${SAMPLE} SM:${SAMPLE} PL:ILLUMINA LB:lib1"
+metric "Threads"     "${THREADS}"
 echo ""
 
 if ask_continue "Align reads with BWA MEM and sort BAM"; then
@@ -374,8 +350,8 @@ if ask_continue "Align reads with BWA MEM and sort BAM"; then
         -t "${THREADS}" \
         -R "@RG\tID:${SAMPLE}\tSM:${SAMPLE}\tPL:ILLUMINA\tLB:lib1" \
         "${REF}" \
-        "${RAW_DIR}/${SAMPLE}_1_trimmed.fastq" \
-        "${RAW_DIR}/${SAMPLE}_2_trimmed.fastq" \
+        "${TRIM_DIR}/${SAMPLE}_1_trimmed.fastq" \
+        "${TRIM_DIR}/${SAMPLE}_2_trimmed.fastq" \
         > "${ALIGNED_DIR}/${SAMPLE}.sam" \
         2> "${LOG_DIR}/bwa_mem.log"
     ok "Alignment complete"
@@ -385,7 +361,6 @@ if ask_continue "Align reads with BWA MEM and sort BAM"; then
         -o "${ALIGNED_DIR}/${SAMPLE}.bam" 2>/dev/null
     ok "SAM converted to BAM"
 
-    echo -e "  ${DIM}Sorting BAM by coordinate...${NC}"
     samtools sort -@ "${THREADS}" "${ALIGNED_DIR}/${SAMPLE}.bam" \
         -o "${ALIGNED_DIR}/${SAMPLE}_sorted.bam" 2>/dev/null &
     spinner $! "Sorting BAM by genomic coordinate"
@@ -399,17 +374,17 @@ if ask_continue "Align reads with BWA MEM and sort BAM"; then
     echo -e "${BOLD}  Alignment Statistics:${NC}"
     divider
     FLAGSTAT=$(samtools flagstat "${ALIGNED_DIR}/${SAMPLE}_sorted.bam" 2>/dev/null)
-    TOTAL=$(echo "$FLAGSTAT"    | grep "primary$"      | awk '{print $1}')
-    MAPPED=$(echo "$FLAGSTAT"   | grep "primary mapped" | awk '{print $1}')
-    PAIRED=$(echo "$FLAGSTAT"   | grep "properly paired" | awk '{print $1}')
-    MAP_PCT=$(echo "$FLAGSTAT"  | grep "primary mapped" | grep -oP '\(\K[^%]+')
-    SINGLETONS=$(echo "$FLAGSTAT" | grep "singletons"  | awk '{print $1}')
+    TOTAL=$(echo "$FLAGSTAT"      | grep "primary$"       | awk '{print $1}')
+    MAPPED=$(echo "$FLAGSTAT"     | grep "primary mapped"  | awk '{print $1}')
+    PAIRED=$(echo "$FLAGSTAT"     | grep "properly paired" | awk '{print $1}')
+    MAP_PCT=$(echo "$FLAGSTAT"    | grep "primary mapped"  | grep -oP '\(\K[^%]+')
+    SINGLETONS=$(echo "$FLAGSTAT" | grep "singletons"      | awk '{print $1}')
 
-    metric "Total primary reads"   "${TOTAL}"
-    metric "Mapped reads"          "${MAPPED}"
-    metric "Mapping rate"          "${MAP_PCT}%"
-    metric "Properly paired"       "${PAIRED}"
-    metric "Singletons"            "${SINGLETONS}"
+    metric "Total primary reads" "${TOTAL}"
+    metric "Mapped reads"        "${MAPPED}"
+    metric "Mapping rate"        "${MAP_PCT}%"
+    metric "Properly paired"     "${PAIRED}"
+    metric "Singletons"          "${SINGLETONS}"
     echo ""
     assess_mapping "${MAP_PCT}"
 fi
@@ -434,12 +409,13 @@ if ask_continue "Mark duplicates with GATK MarkDuplicates"; then
     echo ""
     echo -e "${BOLD}  Duplication Metrics:${NC}"
     divider
-    DUP_LINE=$(grep -A2 "PERCENT_DUPLICATION" "${ALIGNED_DIR}/${SAMPLE}_dup_metrics.txt" 2>/dev/null | tail -1)
-    DUP_RATE=$(echo "$DUP_LINE" | awk '{print $9}')
-    LIB_SIZE=$(echo "$DUP_LINE" | awk '{print $10}')
+    DUP_LINE=$(grep -A2 "PERCENT_DUPLICATION" \
+        "${ALIGNED_DIR}/${SAMPLE}_dup_metrics.txt" 2>/dev/null | tail -1)
+    DUP_RATE=$(echo "$DUP_LINE"       | awk '{print $9}')
+    LIB_SIZE=$(echo "$DUP_LINE"       | awk '{print $10}')
     READ_PAIR_DUPS=$(echo "$DUP_LINE" | awk '{print $7}')
-    metric "Read pair duplicates"    "${READ_PAIR_DUPS}"
-    metric "Estimated library size"  "${LIB_SIZE}"
+    metric "Read pair duplicates"   "${READ_PAIR_DUPS}"
+    metric "Estimated library size" "${LIB_SIZE}"
     assess_duplication "${DUP_RATE}"
 fi
 
@@ -448,12 +424,12 @@ fi
 # ════════════════════════════════════════════════════════════════
 section "9" "Variant Calling — GATK HaplotypeCaller" \
 "Calling SNPs and INDELs using local de-novo assembly of active regions."
-tip "HaplotypeCaller reassembles reads in regions that differ from the reference before calling variants. This makes it significantly more accurate than pileup-based callers, especially for INDELs."
+tip "HaplotypeCaller reassembles reads in active regions before calling variants. Significantly more accurate than pileup-based callers, especially for INDELs."
 
 echo ""
-metric "Caller"    "GATK HaplotypeCaller"
-metric "Mode"      "Germline (default)"
-metric "Output"    "${SAMPLE}_raw.vcf"
+metric "Caller"  "GATK HaplotypeCaller"
+metric "Mode"    "Germline (default)"
+metric "Output"  "${SAMPLE}_raw.vcf"
 echo ""
 
 if ask_continue "Run GATK HaplotypeCaller"; then
@@ -466,15 +442,16 @@ if ask_continue "Run GATK HaplotypeCaller"; then
     spinner $! "HaplotypeCaller — calling variants (this takes a few minutes)"
 
     RAW_TOTAL=$(grep -v "^#" "${VARIANTS_DIR}/${SAMPLE}_raw.vcf" | wc -l)
-    RAW_SNPS=$(grep -v "^#"  "${VARIANTS_DIR}/${SAMPLE}_raw.vcf" | awk 'length($4)==1 && length($5)==1' | wc -l)
+    RAW_SNPS=$(grep -v "^#"  "${VARIANTS_DIR}/${SAMPLE}_raw.vcf" \
+        | awk 'length($4)==1 && length($5)==1' | wc -l)
     RAW_INDELS=$(( RAW_TOTAL - RAW_SNPS ))
 
     echo ""
     echo -e "${BOLD}  Raw Variant Counts:${NC}"
     divider
-    metric "Total raw variants"  "${RAW_TOTAL}"
-    metric "Estimated SNPs"      "${RAW_SNPS}"
-    metric "Estimated INDELs"    "${RAW_INDELS}"
+    metric "Total raw variants" "${RAW_TOTAL}"
+    metric "Estimated SNPs"     "${RAW_SNPS}"
+    metric "Estimated INDELs"   "${RAW_INDELS}"
     tip "Raw VCF contains false positives. Hard filtering is applied in the next step."
 fi
 
@@ -494,13 +471,12 @@ metric "SOR > 3.0"  "Strand Odds Ratio — additional strand bias check"
 echo ""
 echo -e "  ${BOLD}INDEL filters:${NC}"
 metric "QD < 2.0"   "Quality by Depth"
-metric "FS > 200.0" "Fisher Strand (more lenient — INDELs show natural strand bias)"
+metric "FS > 200.0" "Fisher Strand — more lenient, INDELs show natural strand bias"
 metric "SOR > 10.0" "Strand Odds Ratio"
 echo ""
 
 if ask_continue "Filter SNPs and INDELs with GATK VariantFiltration"; then
 
-    # Select SNPs
     gatk SelectVariants -R "${REF}" \
         -V "${VARIANTS_DIR}/${SAMPLE}_raw.vcf" \
         --select-type-to-include SNP \
@@ -508,7 +484,6 @@ if ask_continue "Filter SNPs and INDELs with GATK VariantFiltration"; then
         > "${LOG_DIR}/select_snps.log" 2>&1 &
     spinner $! "Selecting SNPs"
 
-    # Select INDELs
     gatk SelectVariants -R "${REF}" \
         -V "${VARIANTS_DIR}/${SAMPLE}_raw.vcf" \
         --select-type-to-include INDEL \
@@ -516,7 +491,6 @@ if ask_continue "Filter SNPs and INDELs with GATK VariantFiltration"; then
         > "${LOG_DIR}/select_indels.log" 2>&1 &
     spinner $! "Selecting INDELs"
 
-    # Filter SNPs
     gatk VariantFiltration -R "${REF}" \
         -V "${VARIANTS_DIR}/${SAMPLE}_snps.vcf" \
         -O "${VARIANTS_DIR}/${SAMPLE}_snps_filtered.vcf" \
@@ -527,7 +501,6 @@ if ask_continue "Filter SNPs and INDELs with GATK VariantFiltration"; then
         > "${LOG_DIR}/filter_snps.log" 2>&1 &
     spinner $! "Filtering SNPs"
 
-    # Filter INDELs
     gatk VariantFiltration -R "${REF}" \
         -V "${VARIANTS_DIR}/${SAMPLE}_indels.vcf" \
         -O "${VARIANTS_DIR}/${SAMPLE}_indels_filtered.vcf" \
@@ -537,7 +510,6 @@ if ask_continue "Filter SNPs and INDELs with GATK VariantFiltration"; then
         > "${LOG_DIR}/filter_indels.log" 2>&1 &
     spinner $! "Filtering INDELs"
 
-    # Merge
     gatk MergeVcfs \
         -I "${VARIANTS_DIR}/${SAMPLE}_snps_filtered.vcf" \
         -I "${VARIANTS_DIR}/${SAMPLE}_indels_filtered.vcf" \
@@ -545,20 +517,24 @@ if ask_continue "Filter SNPs and INDELs with GATK VariantFiltration"; then
         > "${LOG_DIR}/merge.log" 2>&1 &
     spinner $! "Merging filtered SNPs and INDELs into final VCF"
 
-    PASS_SNPS=$(grep -v "^#"   "${VARIANTS_DIR}/${SAMPLE}_snps_filtered.vcf"   | grep "PASS" | wc -l)
-    PASS_INDELS=$(grep -v "^#" "${VARIANTS_DIR}/${SAMPLE}_indels_filtered.vcf" | grep "PASS" | wc -l)
-    FAIL_SNPS=$(grep -v "^#"   "${VARIANTS_DIR}/${SAMPLE}_snps_filtered.vcf"   | grep -v "PASS" | wc -l)
-    FAIL_INDELS=$(grep -v "^#" "${VARIANTS_DIR}/${SAMPLE}_indels_filtered.vcf" | grep -v "PASS" | wc -l)
+    PASS_SNPS=$(grep -v "^#"   "${VARIANTS_DIR}/${SAMPLE}_snps_filtered.vcf"   \
+        | grep "PASS" | wc -l)
+    PASS_INDELS=$(grep -v "^#" "${VARIANTS_DIR}/${SAMPLE}_indels_filtered.vcf" \
+        | grep "PASS" | wc -l)
+    FAIL_SNPS=$(grep -v "^#"   "${VARIANTS_DIR}/${SAMPLE}_snps_filtered.vcf"   \
+        | grep -v "PASS" | wc -l)
+    FAIL_INDELS=$(grep -v "^#" "${VARIANTS_DIR}/${SAMPLE}_indels_filtered.vcf" \
+        | grep -v "PASS" | wc -l)
     FINAL_TOTAL=$(( PASS_SNPS + PASS_INDELS ))
 
     echo ""
     echo -e "${BOLD}  Filtering Results:${NC}"
     divider
-    metric "PASS SNPs"              "${PASS_SNPS}"
-    metric "PASS INDELs"            "${PASS_INDELS}"
-    metric "Filtered out (SNPs)"    "${FAIL_SNPS}"
-    metric "Filtered out (INDELs)"  "${FAIL_INDELS}"
-    metric "Final clean variants"   "${FINAL_TOTAL}"
+    metric "PASS SNPs"             "${PASS_SNPS}"
+    metric "PASS INDELs"           "${PASS_INDELS}"
+    metric "Filtered out (SNPs)"   "${FAIL_SNPS}"
+    metric "Filtered out (INDELs)" "${FAIL_INDELS}"
+    metric "Final clean variants"  "${FINAL_TOTAL}"
 fi
 
 # ════════════════════════════════════════════════════════════════
@@ -581,25 +557,26 @@ echo -e "${NC}"
 
 echo -e "${BOLD}  Run Summary:${NC}"
 divider
-metric "Sample"           "${SAMPLE}"
-metric "Reference"        "E. coli K-12 (GCF_000005845.2)"
-metric "Threads used"     "${THREADS}"
-metric "Time elapsed"     "${MINS}m ${SECS}s"
-metric "Pipeline date"    "${PIPELINE_DATE}"
+metric "Sample"        "${SAMPLE}"
+metric "Reference"     "E. coli K-12 (GCF_000005845.2)"
+metric "Threads used"  "${THREADS}"
+metric "Time elapsed"  "${MINS}m ${SECS}s"
+metric "Pipeline date" "${PIPELINE_DATE}"
 echo ""
 echo -e "${BOLD}  Output Files:${NC}"
 divider
-metric "Final VCF"        "${VARIANTS_DIR}/${SAMPLE}_final.vcf"
-metric "Aligned BAM"      "${ALIGNED_DIR}/${SAMPLE}_markdup.bam"
-metric "FastQC raw"       "${RAW_DIR}/fastqc_raw/"
-metric "FastQC trimmed"   "${RAW_DIR}/fastqc_trimmed/"
-metric "fastp report"     "${RAW_DIR}/fastp_report.html"
-metric "Log files"        "${LOG_DIR}/"
+metric "Final VCF"      "${VARIANTS_DIR}/${SAMPLE}_final.vcf"
+metric "Aligned BAM"    "${ALIGNED_DIR}/${SAMPLE}_markdup.bam"
+metric "FastQC raw"     "${QC_DIR}/fastqc_raw/"
+metric "FastQC trimmed" "${QC_DIR}/fastqc_trimmed/"
+metric "fastp report"   "${QC_DIR}/fastp_report.html"
+metric "Log files"      "${LOG_DIR}/"
 echo ""
 divider
 echo ""
-echo -e "${DIM}  Pipeline by Vamsi Krishna${NC}"
+echo -e "${DIM}  Pipeline by Vamsi Krishna Seerla${NC}"
 echo -e "${DIM}  github.com/devilfrute/ecoli-variant-calling-pipeline${NC}"
-# Completion sound
-mpg123 -q ~/ngs_practice/assets/complete.mp3 2>/dev/null || true
 echo ""
+
+# ── COMPLETION SOUND ────────────────────────────────────────────
+mpg123 -q ~/ngs_pipeline/assets/complete.mp3 2>/dev/null || true
