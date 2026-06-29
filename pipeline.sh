@@ -1,9 +1,9 @@
 #!/bin/bash
 # ================================================================
 #  NGS VARIANT CALLING PIPELINE
-#  Author  : Vamsi Krishna
+#  Author  : Vamsi Krishna 
 #  GitHub  : https://github.com/devilfrute
-#  Version : 2.0
+#  Version : 1.0
 #  Organism: E. coli K-12 (adaptable to any organism)
 # ================================================================
 
